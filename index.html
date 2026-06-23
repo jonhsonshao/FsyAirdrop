@@ -3,7 +3,6 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SDD 空投</title>
 <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
 <style>
 body{max-width:400px;margin:40px auto;padding:0 20px;background:#f5f7fa;font-family:Arial}
@@ -14,6 +13,7 @@ h2{margin-bottom:10px}
 button{width:100%;padding:16px;border-radius:12px;background:#007bff;color:white;border:none;font-size:16px;margin-top:20px}
 #tip{margin-top:20px;font-size:14px}
 </style>
+<title>SDD 空投</title>
 </head>
 <body>
 <div class="box">
@@ -22,6 +22,7 @@ button{width:100%;padding:16px;border-radius:12px;background:#007bff;color:white
 
   <div class="info-item">领取次数：<span id="claimedCount">--</span></div>
   <div class="info-item">上次领取时间：<span id="lastTime">--</span></div>
+  <div class="info-item">下次可领取倒计时：<span id="countdown">--</span></div>
 
   <button id="claim">领取空投</button>
   <div id="tip"></div>
@@ -36,28 +37,56 @@ const ABI = [
 ];
 const FEE = ethers.utils.parseEther("0.0005");
 const MAX_CLAIM = 100;
+const COOLDOWN_SEC = 86400;
+let countTimer = null;
 
 const btn = document.getElementById("claim");
 const tip = document.getElementById("tip");
 const claimedCountEl = document.getElementById("claimedCount");
 const lastTimeEl = document.getElementById("lastTime");
+const countdownEl = document.getElementById("countdown");
+
+function clearCountTimer(){
+  if(countTimer) clearInterval(countTimer);
+  countTimer = null;
+}
 
 async function loadUserInfo(signer) {
+  clearCountTimer();
   const addr = await signer.getAddress();
   const contract = new ethers.Contract(AIRDROP_CONTRACT, ABI, signer.provider);
   const count = await contract.claimTimes(addr);
   const lastTs = await contract.lastClaim(addr);
 
   const num = Number(count.toString());
-  // 格式：N/100
   claimedCountEl.innerText = num + "/" + MAX_CLAIM;
 
   const ts = Number(lastTs.toString());
   if (ts === 0) {
     lastTimeEl.innerText = "从未领取";
-  } else {
-    lastTimeEl.innerText = new Date(ts * 1000).toLocaleString();
+    countdownEl.innerText = "可立即领取";
+    return;
   }
+  lastTimeEl.innerText = new Date(ts * 1000).toLocaleString();
+
+  // 计算冷却倒计时
+  function updateCd(){
+    const now = Math.floor(Date.now() / 1000);
+    const endCd = ts + COOLDOWN_SEC;
+    const diff = endCd - now;
+    if(diff <= 0){
+      countdownEl.innerText = "冷却结束，可以领取";
+      clearCountTimer();
+      return;
+    }
+    const d = Math.floor(diff / 86400);
+    const h = Math.floor((diff % 86400) / 3600);
+    const m = Math.floor((diff % 3600) / 60);
+    const s = diff % 60;
+    countdownEl.innerText = `${d}天 ${h}时 ${m}分 ${s}秒`;
+  }
+  updateCd();
+  countTimer = setInterval(updateCd,1000);
 }
 
 btn.onclick = async () => {
