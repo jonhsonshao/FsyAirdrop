@@ -18,28 +18,24 @@
                 CHAIN_ID: 56,
                 RPC: "https://bsc-dataseed.binance.org/",
                 CLAIM_FEE: "500000000000000",
-                CLAIM_AMOUNT: ethers.utils.parseEther("1").toString()
+                CLAIM_AMOUNT: ethers.utils.parseEther("1").toString(),
+                // 前端硬编码总空投上限，不再从合约读取
+                MAX_TOTAL_SUPPLY: 2100000
             }
 
-            // 补全全部读取函数，修复ABI解码异常
+            // 精简ABI，只保留必须调用/读取的函数，减少解码出错概率
             const AIRDROP_ABI = [
                 "function isAirdropExpired() view returns(bool)",
                 "function claimAirdrop() external payable",
                 "function burnRemainingToken() external",
                 "function totalClaimed() view returns(uint256)",
-                "function TOTAL_AIRDROP() view returns(uint256)",
                 "function claimTimes(address) view returns(uint32)",
                 "function lastClaim(address) view returns(uint64)",
                 "function deployTime() view returns(uint64)",
-                "function AIRDROP_DURATION() view returns(uint64)",
-                "function FEE_WALLET() view returns(address)",
-                "function MAX_CLAIM() view returns(uint32)",
-                "function COOLDOWN() view returns(uint64)",
-                "function CLAIM_AMOUNT() view returns(uint256)"
+                "function AIRDROP_DURATION() view returns(uint64)"
             ];
-            const SDD_ABI = ["function balanceOf(address owner) view returns(uint256)"];
 
-            let provider, signer, contract, sddContract;
+            let provider, signer, contract;
             let userAddress = "";
         </script>
 
@@ -58,10 +54,6 @@
             <div class="flex justify-between">
                 <span>距离过期：</span>
                 <span id="remainTime">--</span>
-            </div>
-            <div class="flex justify-between">
-                <span>合约SDD余额：</span>
-                <span id="contractBalance">0 SDD</span>
             </div>
             <div class="flex justify-between">
                 <span>已发放总量：</span>
@@ -118,9 +110,7 @@
                 signer = provider.getSigner();
                 userAddress = await signer.getAddress();
                 $("#walletAddr").innerText = "已连接：" + userAddress;
-                contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, AIRDROP_ABI, signer);
-                // 统一使用钱包provider读取代币余额，不再单独RPC，避免节点不同步
-                sddContract = new ethers.Contract(CONFIG.SDD_TOKEN_ADDRESS, SDD_ABI, provider);
+                contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, AIRDROP_ABI, provider);
                 showMsg("钱包连接成功", "success");
                 loadAllData();
             }catch(err){
@@ -141,7 +131,6 @@
         async function loadAllData() {
             if(!contract) return;
             try {
-                // 读取过期时间，修复大数转换
                 const expired = await contract.isAirdropExpired();
                 const deployTimeBn = await contract.deployTime();
                 const durationBn = await contract.AIRDROP_DURATION();
@@ -164,35 +153,36 @@
                     $("#remainTime").innerText = `${d}天${h}时${m}分`;
                 }
 
-                // 总量数据
+                // 全网已领取数量
                 const totalClaimedBn = await contract.totalClaimed();
-                const totalMaxBn = await contract.TOTAL_AIRDROP();
-                const balanceRaw = await sddContract.balanceOf(CONFIG.CONTRACT_ADDRESS);
-                const balance = ethers.utils.formatEther(balanceRaw);
-                const claimed = ethers.utils.formatEther(totalClaimedBn);
-                const left = ethers.utils.formatEther(totalMaxBn.sub(totalClaimedBn));
-                $("#contractBalance").innerText = balance + " SDD";
-                $("#claimedTotal").innerText = claimed + " SDD";
-                $("#leftTotal").innerText = left + " SDD";
+                const claimedNum = Number(ethers.utils.formatEther(totalClaimedBn));
+                const leftNum = CONFIG.MAX_TOTAL_SUPPLY - claimedNum;
+                $("#claimedTotal").innerText = claimedNum + " SDD";
+                $("#leftTotal").innerText = leftNum + " SDD";
 
                 if(!userAddress) return;
                 const timesBn = await contract.claimTimes(userAddress);
                 const lastTsBn = await contract.lastClaim(userAddress);
-                $("#userClaimTimes").innerText = timesBn.toString() + " / 100";
+                const userClaimCount = timesBn.toNumber();
+                $("#userClaimTimes").innerText = userClaimCount + " / 100";
                 if(lastTsBn.toNumber() === 0) {
                     $("#lastClaimTime").innerText = "无记录";
                 } else {
                     $("#lastClaimTime").innerText = new Date(lastTsBn.toNumber() * 1000).toLocaleString();
                 }
 
-                // 领取判定逻辑
+                // 领取判定，移除合约余额校验，只保留4项核心限制
                 let can = true;
                 let tip = "";
-                if(expired) {can=false;tip="活动已过期"}
-                else if(timesBn.toNumber() >= 100) {can=false;tip="已达领取上限100次"}
-                else if(now < lastTsBn.toNumber() + 86400 && lastTsBn.toNumber() > 0) {can=false;tip="冷却24小时未到"}
-                else if(totalClaimedBn.add(CONFIG.CLAIM_AMOUNT).gt(totalMaxBn)) {can=false;tip="空投总额已领完"}
-                else if(balanceRaw.lt(CONFIG.CLAIM_AMOUNT)) {can=false;tip="合约SDD余额不足"}
+                if(expired) {
+                    can=false;tip="活动已过期";
+                } else if(userClaimCount >= 100) {
+                    can=false;tip="已达领取上限100次";
+                } else if(now < lastTsBn.toNumber() + 86400 && lastTsBn.toNumber() > 0) {
+                    can=false;tip="冷却24小时未到";
+                } else if(leftNum <= 0) {
+                    can=false;tip="空投总额已领完";
+                }
 
                 if(can) {
                     $("#canClaim").innerText = "可以领取";
@@ -204,8 +194,8 @@
                     $("#claimBtn").disabled = true;
                 }
             } catch(e) {
-                console.error("读取合约失败：", e);
-                $("#canClaim").innerText = "读取链数据异常，请切换BSC主网并重连钱包";
+                console.error("读取数据异常：", e);
+                $("#canClaim").innerText = "链数据读取失败，请切换BSC主网并重连钱包";
                 $("#canClaim").className = "text-red-400";
                 $("#claimBtn").disabled = true;
             }
@@ -215,7 +205,8 @@
             $("#claimBtn").disabled = true;
             showMsg("交易发送中，请在钱包确认...", "success");
             try {
-                const tx = await contract.claimAirdrop({
+                const writeContract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, AIRDROP_ABI, signer);
+                const tx = await writeContract.claimAirdrop({
                     value: CONFIG.CLAIM_FEE
                 });
                 showMsg("交易已上链，等待确认：" + tx.hash, "success");
@@ -233,7 +224,8 @@
             $("#burnBtn").disabled = true;
             showMsg("销毁交易发送中...", "success");
             try {
-                const tx = await contract.burnRemainingToken();
+                const writeContract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, AIRDROP_ABI, signer);
+                const tx = await writeContract.burnRemainingToken();
                 await tx.wait();
                 showMsg("销毁成功，合约内SDD已转入黑洞", "success");
                 loadAllData();
