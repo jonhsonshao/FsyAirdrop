@@ -1,59 +1,242 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FSY 空投</title>
-<script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
-<style>
-body{max-width:400px;margin:40px auto;padding:0 20px;background:#f5f7fa;font-family:Arial}
-.box{background:#fff;padding:25px;border-radius:16px;box-shadow:0 4px 12px rgba(0,0,0,0.05)}
-h2{margin-bottom:10px}
-.desc{color:#666;margin-bottom:25px;font-size:14px}
-button{width:100%;padding:16px;border-radius:12px;background:#007bff;color:white;border:none;font-size:16px}
-#tip{margin-top:20px;font-size:14px}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SDD 空投领取</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
 </head>
-<body>
-<div class="box">
-  <h2>FSY 空投</h2>
-  <p class="desc">24小时1次，每次1枚</p>
-  <button id="claim">领取空投</button>
-  <div id="tip"></div>
-</div>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center py-10 px-4">
+    <div class="w-full max-w-xl bg-gray-800 rounded-xl p-6 shadow-xl">
+        <h1 class="text-2xl font-bold text-center mb-6 text-yellow-400">SDD 空投领取</h1>
 
-<script>
-const AIRDROP_CONTRACT = "0x5644f110e1eeea676ef6bdf02f9fbea0364f8c62";
-const ABI = [{"inputs":[],"name":"claimAirdrop","outputs":[],"stateMutability":"payable","type":"function"}];
-const FEE = ethers.utils.parseEther("0.0005");
+        <script>
+            // 已完整配置
+            const CONFIG = {
+                CONTRACT_ADDRESS: "0x9F852772D80a737C4B97e447aACeFEA6A8C9C4eC",
+                SDD_TOKEN_ADDRESS: "0x12a8e5f6f0984f3ca143ab190a2ed4dd7948d0ca",
+                CHAIN_ID: 56,
+                RPC: "https://bsc-dataseed.binance.org/",
+                CLAIM_FEE: "500000000000000",
+                CLAIM_AMOUNT: ethers.utils.parseEther("1").toString()
+            }
 
-document.getElementById("claim").onclick = async () => {
-  let btn = document.getElementById("claim");
-  let tip = document.getElementById("tip");
-  btn.disabled = true;
-  btn.innerText = "处理中...";
+            const AIRDROP_ABI = [
+                "function isAirdropExpired() public view returns(bool)",
+                "function claimAirdrop() external payable",
+                "function burnRemainingToken() external",
+                "function totalClaimed() view returns(uint256)",
+                "function TOTAL_AIRDROP() view returns(uint256)",
+                "function claimTimes(address) view returns(uint32)",
+                "function lastClaim(address) view returns(uint64)",
+                "function deployTime() view returns(uint64)",
+                "function AIRDROP_DURATION() view returns(uint64)"
+            ];
+            const SDD_ABI = ["function balanceOf(address) view returns(uint256)"];
 
-  try {
-    const provider = new ethers.providers.Web3Provider(window.ethereum);
-    await provider.send("eth_requestAccounts", []);
-    const signer = provider.getSigner();
-    const contract = new ethers.Contract(AIRDROP_CONTRACT, ABI, signer);
+            let provider, signer, contract, sddContract;
+            let userAddress = "";
+        </script>
 
-    tip.innerText = "发送交易...";
-    const tx = await contract.claimAirdrop({
-      value: FEE,
-      gasLimit: 300000  // 关键修改：从200000提高到300000
-    });
+        <!-- 钱包连接区域 -->
+        <div class="mb-6">
+            <button id="connectBtn" class="w-full bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-3 rounded-lg transition">
+                连接钱包
+            </button>
+            <p id="walletAddr" class="mt-3 text-sm text-gray-400 text-center break-all"></p>
+        </div>
 
-    await tx.wait();
-    tip.innerText = "✅ 领取成功！";
-  } catch(e) {
-    tip.innerText = "❌ 失败：" + e.message.substr(0,50);
-  }
+        <!-- 全局数据面板 -->
+        <div class="bg-gray-700 rounded-lg p-4 mb-6 space-y-2 text-sm">
+            <div class="flex justify-between">
+                <span>空投状态：</span>
+                <span id="expireStatus" class="text-green-400">活动进行中</span>
+            </div>
+            <div class="flex justify-between">
+                <span>距离过期：</span>
+                <span id="remainTime">--</span>
+            </div>
+            <div class="flex justify-between">
+                <span>合约SDD余额：</span>
+                <span id="contractBalance">0 SDD</span>
+            </div>
+            <div class="flex justify-between">
+                <span>已发放总量：</span>
+                <span id="claimedTotal">0 SDD</span>
+            </div>
+            <div class="flex justify-between">
+                <span>剩余可发放总额：</span>
+                <span id="leftTotal">0 SDD</span>
+            </div>
+        </div>
 
-  btn.disabled = false;
-  btn.innerText = "领取空投";
-};
-</script>
+        <!-- 用户信息面板 -->
+        <div class="bg-gray-700 rounded-lg p-4 mb-6 space-y-2 text-sm">
+            <div class="flex justify-between">
+                <span>你的领取次数：</span>
+                <span id="userClaimTimes">0 / 100</span>
+            </div>
+            <div class="flex justify-between">
+                <span>上次领取时间：</span>
+                <span id="lastClaimTime">无记录</span>
+            </div>
+            <div class="flex justify-between">
+                <span>是否可领取：</span>
+                <span id="canClaim">--</span>
+            </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="space-y-4">
+            <button id="claimBtn" disabled class="w-full bg-green-600 disabled:bg-gray-600 py-3 rounded-lg font-bold">
+                领取空投
+            </button>
+            <button id="burnBtn" disabled class="w-full bg-red-600 disabled:bg-gray-600 py-3 rounded-lg font-bold">
+                销毁合约剩余SDD（仅过期可用）
+            </button>
+        </div>
+
+        <!-- 提示信息 -->
+        <div id="msgBox" class="mt-6 p-3 rounded-lg text-sm hidden"></div>
+    </div>
+
+    <script>
+        const $ = s => document.querySelector(s);
+        const showMsg = (text, type = "error") => {
+            const box = $("#msgBox");
+            box.classList.remove("hidden", "bg-red-900", "bg-green-900");
+            if(type === "error") box.classList.add("bg-red-900");
+            else box.classList.add("bg-green-900");
+            box.innerText = text;
+        }
+
+        // 页面加载自动尝试连接钱包
+        window.onload = async function(){
+            if(window.ethereum){
+                try{
+                    const accounts = await window.ethereum.request({method: "eth_accounts"});
+                    if(accounts.length > 0){
+                        await connectWallet();
+                    }
+                }catch(e){}
+            }
+        }
+
+        async function connectWallet(){
+            await window.ethereum.request({ method: "eth_requestAccounts" });
+            provider = new ethers.providers.Web3Provider(window.ethereum);
+            signer = provider.getSigner();
+            userAddress = await signer.getAddress();
+            $("#walletAddr").innerText = "已连接：" + userAddress;
+            contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, AIRDROP_ABI, signer);
+            const readProvider = new ethers.providers.JsonRpcProvider(CONFIG.RPC);
+            sddContract = new ethers.Contract(CONFIG.SDD_TOKEN_ADDRESS, SDD_ABI, readProvider);
+            showMsg("钱包连接成功", "success");
+            loadAllData();
+        }
+
+        $("#connectBtn").onclick = connectWallet;
+
+        async function loadAllData() {
+            try {
+                const expired = await contract.isAirdropExpired();
+                const deployTime = await contract.deployTime();
+                const duration = await contract.AIRDROP_DURATION();
+                const now = Math.floor(Date.now() / 1000);
+                const endTime = deployTime.toNumber() + duration.toNumber();
+                const diff = endTime - now;
+
+                if(expired) {
+                    $("#expireStatus").innerText = "已过期";
+                    $("#expireStatus").className = "text-red-400";
+                    $("#remainTime").innerText = "活动结束";
+                    $("#claimBtn").disabled = true;
+                    $("#burnBtn").disabled = false;
+                } else {
+                    $("#expireStatus").innerText = "进行中";
+                    $("#expireStatus").className = "text-green-400";
+                    const d = Math.floor(diff / 86400);
+                    const h = Math.floor((diff % 86400) / 3600);
+                    const m = Math.floor((diff % 3600) / 60);
+                    $("#remainTime").innerText = `${d}天${h}时${m}分`;
+                }
+
+                const totalClaimed = await contract.totalClaimed();
+                const totalMax = await contract.TOTAL_AIRDROP();
+                const balanceRaw = await sddContract.balanceOf(CONFIG.CONTRACT_ADDRESS);
+                const balance = ethers.utils.formatEther(balanceRaw);
+                const claimed = ethers.utils.formatEther(totalClaimed);
+                const left = ethers.utils.formatEther(totalMax.sub(totalClaimed));
+                $("#contractBalance").innerText = balance + " SDD";
+                $("#claimedTotal").innerText = claimed + " SDD";
+                $("#leftTotal").innerText = left + " SDD";
+
+                if(!userAddress) return;
+                const times = await contract.claimTimes(userAddress);
+                const lastTs = await contract.lastClaim(userAddress);
+                $("#userClaimTimes").innerText = times.toString() + " / 100";
+                if(lastTs.toNumber() === 0) {
+                    $("#lastClaimTime").innerText = "无记录";
+                } else {
+                    $("#lastClaimTime").innerText = new Date(lastTs.toNumber() * 1000).toLocaleString();
+                }
+
+                let can = true;
+                let tip = "";
+                if(expired) {can=false;tip="活动已过期"}
+                else if(times.toNumber() >= 100) {can=false;tip="已达领取上限100次"}
+                else if(now < lastTs.toNumber() + 86400 && lastTs.toNumber() > 0) {can=false;tip="冷却24小时未到"}
+                else if(totalClaimed.add(CONFIG.CLAIM_AMOUNT).gt(totalMax)) {can=false;tip="空投总额已领完"}
+                else if(balanceRaw.lt(CONFIG.CLAIM_AMOUNT)) {can=false;tip="合约SDD余额不足"}
+                if(can) {
+                    $("#canClaim").innerText = "可以领取";
+                    $("#canClaim").className = "text-green-400";
+                    $("#claimBtn").disabled = false;
+                } else {
+                    $("#canClaim").innerText = tip;
+                    $("#canClaim").className = "text-red-400";
+                    $("#claimBtn").disabled = true;
+                }
+            } catch(e) {
+                console.error(e);
+            }
+        }
+
+        $("#claimBtn").onclick = async () => {
+            $("#claimBtn").disabled = true;
+            showMsg("交易发送中，请在钱包确认...", "success");
+            try {
+                const tx = await contract.claimAirdrop({
+                    value: CONFIG.CLAIM_FEE
+                });
+                showMsg("交易已上链，等待确认：" + tx.hash, "success");
+                await tx.wait();
+                showMsg("领取成功！空投已到账", "success");
+                loadAllData();
+            } catch(err) {
+                showMsg(err.message || "领取失败");
+            } finally {
+                $("#claimBtn").disabled = false;
+            }
+        }
+
+        $("#burnBtn").onclick = async () => {
+            $("#burnBtn").disabled = true;
+            showMsg("销毁交易发送中...", "success");
+            try {
+                const tx = await contract.burnRemainingToken();
+                await tx.wait();
+                showMsg("销毁成功，合约内SDD已转入黑洞", "success");
+                loadAllData();
+            } catch(err) {
+                showMsg(err.message);
+            } finally {
+                $("#burnBtn").disabled = false;
+            }
+        }
+
+        setInterval(loadAllData, 10000);
+    </script>
 </body>
 </html>
