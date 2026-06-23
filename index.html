@@ -12,7 +12,6 @@
         <h1 class="text-2xl font-bold text-center mb-6 text-yellow-400">SDD 空投领取</h1>
 
         <script>
-            // 已完整配置
             const CONFIG = {
                 CONTRACT_ADDRESS: "0x9F852772D80a737C4B97e447aACeFEA6A8C9C4eC",
                 SDD_TOKEN_ADDRESS: "0x12a8e5f6f0984f3ca143ab190a2ed4dd7948d0ca",
@@ -39,7 +38,6 @@
             let userAddress = "";
         </script>
 
-        <!-- 钱包连接区域 -->
         <div class="mb-6">
             <button id="connectBtn" class="w-full bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-3 rounded-lg transition">
                 连接钱包
@@ -47,7 +45,6 @@
             <p id="walletAddr" class="mt-3 text-sm text-gray-400 text-center break-all"></p>
         </div>
 
-        <!-- 全局数据面板 -->
         <div class="bg-gray-700 rounded-lg p-4 mb-6 space-y-2 text-sm">
             <div class="flex justify-between">
                 <span>空投状态：</span>
@@ -71,7 +68,6 @@
             </div>
         </div>
 
-        <!-- 用户信息面板 -->
         <div class="bg-gray-700 rounded-lg p-4 mb-6 space-y-2 text-sm">
             <div class="flex justify-between">
                 <span>你的领取次数：</span>
@@ -87,7 +83,6 @@
             </div>
         </div>
 
-        <!-- 操作按钮 -->
         <div class="space-y-4">
             <button id="claimBtn" disabled class="w-full bg-green-600 disabled:bg-gray-600 py-3 rounded-lg font-bold">
                 领取空投
@@ -97,7 +92,6 @@
             </button>
         </div>
 
-        <!-- 提示信息 -->
         <div id="msgBox" class="mt-6 p-3 rounded-lg text-sm hidden"></div>
     </div>
 
@@ -111,34 +105,35 @@
             box.innerText = text;
         }
 
-        // 页面加载自动尝试连接钱包
-        window.onload = async function(){
-            if(window.ethereum){
-                try{
-                    const accounts = await window.ethereum.request({method: "eth_accounts"});
-                    if(accounts.length > 0){
-                        await connectWallet();
-                    }
-                }catch(e){}
-            }
-        }
-
         async function connectWallet(){
-            await window.ethereum.request({ method: "eth_requestAccounts" });
-            provider = new ethers.providers.Web3Provider(window.ethereum);
-            signer = provider.getSigner();
-            userAddress = await signer.getAddress();
-            $("#walletAddr").innerText = "已连接：" + userAddress;
-            contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, AIRDROP_ABI, signer);
-            const readProvider = new ethers.providers.JsonRpcProvider(CONFIG.RPC);
-            sddContract = new ethers.Contract(CONFIG.SDD_TOKEN_ADDRESS, SDD_ABI, readProvider);
-            showMsg("钱包连接成功", "success");
-            loadAllData();
+            if(!window.ethereum) return showMsg("请在TP钱包内置浏览器打开页面");
+            try{
+                await window.ethereum.request({ method: "eth_requestAccounts" });
+                provider = new ethers.providers.Web3Provider(window.ethereum);
+                signer = provider.getSigner();
+                userAddress = await signer.getAddress();
+                $("#walletAddr").innerText = "已连接：" + userAddress;
+                contract = new ethers.Contract(CONFIG.CONTRACT_ADDRESS, AIRDROP_ABI, signer);
+                const readProvider = new ethers.providers.JsonRpcProvider(CONFIG.RPC);
+                sddContract = new ethers.Contract(CONFIG.SDD_TOKEN_ADDRESS, SDD_ABI, readProvider);
+                showMsg("钱包连接成功", "success");
+                loadAllData();
+            }catch(err){
+                showMsg(err.message);
+            }
         }
 
         $("#connectBtn").onclick = connectWallet;
 
+        window.addEventListener('load',async ()=>{
+            if(window.ethereum){
+                const accounts = await window.ethereum.request({method:'eth_accounts'});
+                if(accounts.length>0) connectWallet();
+            }
+        })
+
         async function loadAllData() {
+            if(!contract) return;
             try {
                 const expired = await contract.isAirdropExpired();
                 const deployTime = await contract.deployTime();
