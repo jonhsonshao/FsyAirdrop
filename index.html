@@ -9,29 +9,61 @@
 body{max-width:400px;margin:40px auto;padding:0 20px;background:#f5f7fa;font-family:Arial}
 .box{background:#fff;padding:25px;border-radius:16px;box-shadow:0 4px 12px rgba(0,0,0,0.05)}
 h2{margin-bottom:10px}
-.desc{color:#666;margin-bottom:25px;font-size:14px}
-button{width:100%;padding:16px;border-radius:12px;background:#007bff;color:white;border:none;font-size:16px}
+.desc{color:#666;margin-bottom:15px;font-size:14px}
+.info-item{padding:8px 0;font-size:14px;color:#333;border-bottom:1px solid #eee;}
+button{width:100%;padding:16px;border-radius:12px;background:#007bff;color:white;border:none;font-size:16px;margin-top:20px}
 #tip{margin-top:20px;font-size:14px}
 </style>
 </head>
 <body>
 <div class="box">
   <h2>SDD 空投</h2>
-  <p class="desc">24小时1次，每次1枚</p>
+  <p class="desc">24小时1次，每次1枚，单人最多领取100次</p>
+
+  <div class="info-item">领取次数：<span id="claimedCount">--</span></div>
+  <div class="info-item">上次领取时间：<span id="lastTime">--</span></div>
+
   <button id="claim">领取空投</button>
   <div id="tip"></div>
 </div>
 
 <script>
 const AIRDROP_CONTRACT = "0x9F852772D80a737C4B97e447aACeFEA6A8C9C4eC";
-const ABI = [{"inputs":[],"name":"claimAirdrop","outputs":[],"stateMutability":"payable","type":"function"}];
+const ABI = [
+  {"inputs":[{"name":"_account","type":"address"}],"name":"claimTimes","outputs":[{"type":"uint32"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"name":"_account","type":"address"}],"name":"lastClaim","outputs":[{"type":"uint64"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"claimAirdrop","outputs":[],"stateMutability":"payable","type":"function"}
+];
 const FEE = ethers.utils.parseEther("0.0005");
+const MAX_CLAIM = 100;
 
-document.getElementById("claim").onclick = async () => {
-  let btn = document.getElementById("claim");
-  let tip = document.getElementById("tip");
+const btn = document.getElementById("claim");
+const tip = document.getElementById("tip");
+const claimedCountEl = document.getElementById("claimedCount");
+const lastTimeEl = document.getElementById("lastTime");
+
+async function loadUserInfo(signer) {
+  const addr = await signer.getAddress();
+  const contract = new ethers.Contract(AIRDROP_CONTRACT, ABI, signer.provider);
+  const count = await contract.claimTimes(addr);
+  const lastTs = await contract.lastClaim(addr);
+
+  const num = Number(count.toString());
+  // 格式：N/100
+  claimedCountEl.innerText = num + "/" + MAX_CLAIM;
+
+  const ts = Number(lastTs.toString());
+  if (ts === 0) {
+    lastTimeEl.innerText = "从未领取";
+  } else {
+    lastTimeEl.innerText = new Date(ts * 1000).toLocaleString();
+  }
+}
+
+btn.onclick = async () => {
   btn.disabled = true;
   btn.innerText = "处理中...";
+  tip.innerText = "";
 
   try {
     const provider = new ethers.providers.Web3Provider(window.ethereum);
@@ -39,21 +71,33 @@ document.getElementById("claim").onclick = async () => {
     const signer = provider.getSigner();
     const contract = new ethers.Contract(AIRDROP_CONTRACT, ABI, signer);
 
-    tip.innerText = "发送交易...";
+    tip.innerText = "发送交易中，请在钱包确认...";
     const tx = await contract.claimAirdrop({
       value: FEE,
       gasLimit: 300000
     });
-
     await tx.wait();
     tip.innerText = "✅ 领取成功！";
+    await loadUserInfo(signer);
   } catch(e) {
-    tip.innerText = "❌ 失败：" + e.message.substr(0,50);
+    tip.innerText = "❌ 失败：" + e.message.substr(0, 60);
   }
 
   btn.disabled = false;
   btn.innerText = "领取空投";
 };
+
+(async function autoLoad() {
+  if (!window.ethereum) return;
+  try {
+    const provider = new ethers.providers.Web3Provider(window.ethereum);
+    const accounts = await provider.listAccounts();
+    if (accounts.length > 0) {
+      const signer = provider.getSigner();
+      await loadUserInfo(signer);
+    }
+  } catch (err) {}
+})();
 </script>
 </body>
 </html>
